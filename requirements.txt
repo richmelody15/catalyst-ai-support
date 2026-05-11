@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+pydantic-settings
+python-telegram-bot[job-queue]
+httpx
+stripe
+python-dotenv
