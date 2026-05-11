@@ -8,6 +8,8 @@ class UserResponse(BaseModel):
     id: int
     telegram_id: int
     username: str | None
+    full_name: str | None = None
+    email: str | None = None
     subscription_status: str
     is_admin: bool
     class Config:

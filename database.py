@@ -39,6 +39,7 @@ class User(Base):
     telegram_id = Column(Integer, unique=True, index=True)
     username = Column(String, nullable=True)
     full_name = Column(String, nullable=True)
+    email = Column(String(120), nullable=True)
     subscription_status = Column(Enum(SubscriptionStatus), default=SubscriptionStatus.free)
     subscription_end = Column(DateTime, nullable=True)
     is_admin = Column(Boolean, default=False)
@@ -167,6 +168,17 @@ class GiveawayParticipant(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     entered_at = Column(DateTime, default=datetime.utcnow)
     giveaway = relationship("Giveaway", back_populates="participants")
+
+
+# ── App Settings ────────────────────────────────────────────────────
+
+class AppSettings(Base):
+    __tablename__ = "app_settings"
+    id = Column(Integer, primary_key=True)
+    paywall_enabled = Column(Boolean, default=False)
+    plans_json = Column(Text, default='{"weekly":{"name":"Weekly","price":9.99,"days":7},"monthly":{"name":"Monthly","price":19.99,"days":30},"quarterly":{"name":"Quarterly","price":49.99,"days":90}}')
+    protected_routes = Column(Text, default='/dashboard,/signals')
+    email_alerts = Column(Boolean, default=True)
 
 
 def init_db():

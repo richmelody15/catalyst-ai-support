@@ -9,8 +9,13 @@ class Settings(BaseSettings):
     STRIPE_WEBHOOK_SECRET: str = ""
     PREMIUM_PRICE_ID: str = ""
     ADMIN_CHAT_ID: int = 0
+    ADMIN_EMAIL: str = ""
     APP_URL: str = "http://localhost:8000"
     RATE_LIMIT_PER_MIN: int = 10
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASS: str = ""
 
     class Config:
         env_file = ".env"

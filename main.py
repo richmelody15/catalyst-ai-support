@@ -1,17 +1,21 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
-from routers import auth, subscription, tickets, admin, admin_auth, chat, telegram_webhook, analytics, tournaments, referrals, settings, giveaways
+from routers import auth, subscription, tickets, admin, admin_auth, chat, telegram_webhook, analytics, tournaments, referrals, settings, giveaways, paywall, notifications
 from database import init_db
+from middleware import paywall_middleware
 
-app = FastAPI(title="Catalyst AI Support", version="2.1")
+app = FastAPI(title="Catalyst AI Support", version="3.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.middleware("http")(paywall_middleware)
 
 app.include_router(admin_auth.router)   # must be before admin so /api/admin/login is found first
 app.include_router(auth.router)
 app.include_router(subscription.router)
 app.include_router(tickets.router)
 app.include_router(admin.router)
+app.include_router(paywall.router)
+app.include_router(notifications.router)
 app.include_router(chat.router)
 app.include_router(telegram_webhook.router)
 app.include_router(analytics.router)
@@ -26,7 +30,7 @@ def startup():
 
 @app.get("/")
 def root():
-    return {"status": "AI Support System Active", "version": "2.1"}
+    return {"status": "AI Support System Active", "version": "3.0"}
 
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard():
@@ -92,6 +96,12 @@ input:focus,textarea:focus{border-color:var(--accent)}
 .admin-login-box h4{color:var(--green);margin-bottom:.5rem}
 .admin-panel-box{background:rgba(10,10,46,.95);padding:15px;border-radius:12px;margin-bottom:15px;border:1px solid rgba(255,215,0,.2)}
 .admin-panel-box h4{color:var(--gold);margin-bottom:.5rem}
+.plans-table{width:100%;border-collapse:collapse;margin-bottom:.75rem}
+.plans-table th,.plans-table td{padding:.4rem .6rem;border:1px solid var(--border);font-size:.8rem}
+.plans-table th{background:rgba(255,255,255,.05);color:var(--muted);text-align:left}
+.plans-table input{background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:4px;padding:.3rem .5rem;color:var(--text);font-size:.8rem;width:100%;margin:0}
+.user-info-box{background:rgba(26,26,46,.9);padding:15px;border-radius:12px;margin-bottom:15px;border:1px solid var(--border)}
+.user-info-box h4{color:var(--green);margin-bottom:.5rem}
 @media(max-width:768px){.header{padding:1rem}.container{padding:1rem}.stat-grid{grid-template-columns:1fr 1fr}}
 </style>
 </head>
@@ -101,6 +111,14 @@ input:focus,textarea:focus{border-color:var(--accent)}
   <div class="status"><div class="dot"></div><span id="status-text">Live</span></div>
 </div>
 <div class="container">
+
+  <!-- User Info Form (shown if email missing) -->
+  <div id="user-info-form" class="user-info-box" style="display:none;">
+    <h4>Complete Your Profile</h4>
+    <input id="user-fullname" placeholder="Full Name" style="width:100%;padding:8px;margin:5px 0;">
+    <input id="user-email" placeholder="Email address" type="email" style="width:100%;padding:8px;margin:5px 0;">
+    <button onclick="saveUserInfo()" class="btn btn-primary">Save & Continue</button>
+  </div>
 
   <!-- Admin Login Panel (hidden by default) -->
   <div id="admin-login" class="admin-login-box" style="display:none;">
@@ -117,6 +135,29 @@ input:focus,textarea:focus{border-color:var(--accent)}
       <button onclick="adminLogout()" class="btn btn-red">Logout</button>
     </div>
     <div id="admin-stats" style="font-size:.85rem;color:var(--muted);margin-bottom:10px;"></div>
+
+    <!-- Paywall Settings -->
+    <div id="admin-paywall-settings" style="margin-top:15px;border-top:1px solid var(--border);padding-top:15px;">
+      <h4 style="color:var(--gold);margin-bottom:8px;">Paywall Settings</h4>
+      <div class="toggle">
+        <input type="checkbox" id="paywall-toggle" onchange="togglePaywall()">
+        <label>Enable Paywall</label>
+      </div>
+      <div class="toggle">
+        <input type="checkbox" id="email-alerts-toggle" onchange="toggleEmailAlerts()">
+        <label>Email Alerts on Paywall Bypass</label>
+      </div>
+
+      <h5 style="color:var(--muted);margin:10px 0 5px;">Subscription Plans <button class="btn btn-green" onclick="addPlanRow()" style="font-size:.7rem;padding:.3rem .6rem;">+ Add Plan</button></h5>
+      <table class="plans-table" id="plans-table">
+        <thead><tr><th>Key</th><th>Name</th><th>Price ($)</th><th>Days</th><th></th></tr></thead>
+        <tbody id="plans-tbody"></tbody>
+      </table>
+      <button class="btn btn-primary" onclick="savePlans()" style="font-size:.8rem;">Save Plans</button>
+
+      <label style="font-size:.8rem;color:var(--muted);margin-top:12px;display:block;">Protected Routes (comma-separated):</label>
+      <input type="text" id="protected-routes" placeholder="/dashboard,/signals" onchange="saveRoutes()" style="margin-top:4px;">
+    </div>
   </div>
 
   <!-- Tab Bar -->
@@ -254,6 +295,40 @@ function showToast(msg, type='success') {
   setTimeout(() => t.style.display = 'none', 3000);
 }
 
+// ── User Info ──────────────────────────────────────────────────────
+function checkUserInfo() {
+  const tgId = localStorage.getItem('user_id');
+  if (!tgId) return;
+  fetch(`/api/auth/me/${tgId}`)
+    .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+    .then(user => {
+      if (!user.email || !user.full_name) {
+        document.getElementById('user-info-form').style.display = 'block';
+      } else {
+        document.getElementById('user-info-form').style.display = 'none';
+      }
+    })
+    .catch(() => {});
+}
+
+function saveUserInfo() {
+  const tgId = localStorage.getItem('user_id');
+  const fullName = document.getElementById('user-fullname').value;
+  const email = document.getElementById('user-email').value;
+  if (!fullName || !email) return showToast('Please fill both fields', 'error');
+  fetch('/api/notifications/save-user-info', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ telegram_id: parseInt(tgId), email, full_name: fullName })
+  })
+  .then(r => r.json())
+  .then(d => {
+    document.getElementById('user-info-form').style.display = 'none';
+    showToast('Profile saved!');
+  })
+  .catch(() => showToast('Failed to save profile', 'error'));
+}
+
 // ── Admin Auth ─────────────────────────────────────────────────────
 function adminLogin() {
   const password = document.getElementById('admin-password').value;
@@ -273,6 +348,7 @@ function adminLogin() {
     document.getElementById('admin-panel').style.display = 'block';
     showAdminSections();
     loadAdminStats();
+    loadPaywallSettings();
   })
   .catch(err => {
     document.getElementById('login-error').textContent = 'Incorrect password';
@@ -302,21 +378,17 @@ function adminFetch(url, options = {}) {
 }
 
 function showAdminSections() {
-  const ct = document.getElementById('create-tournament');
-  const cg = document.getElementById('create-giveaway');
-  const dg = document.getElementById('draw-giveaway');
-  if (ct) ct.style.display = 'block';
-  if (cg) cg.style.display = 'block';
-  if (dg) dg.style.display = 'block';
+  ['create-tournament','create-giveaway','draw-giveaway'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'block';
+  });
 }
 
 function hideAdminSections() {
-  const ct = document.getElementById('create-tournament');
-  const cg = document.getElementById('create-giveaway');
-  const dg = document.getElementById('draw-giveaway');
-  if (ct) ct.style.display = 'none';
-  if (cg) cg.style.display = 'none';
-  if (dg) dg.style.display = 'none';
+  ['create-tournament','create-giveaway','draw-giveaway'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
 }
 
 async function loadAdminStats() {
@@ -330,19 +402,107 @@ async function loadAdminStats() {
   } catch(e) {}
 }
 
+// ── Paywall Settings ───────────────────────────────────────────────
+async function loadPaywallSettings() {
+  try {
+    const r = await adminFetch('/api/admin/settings/paywall');
+    if (!r.ok) return;
+    const d = await r.json();
+    document.getElementById('paywall-toggle').checked = d.paywall_enabled;
+    document.getElementById('email-alerts-toggle').checked = d.email_alerts;
+    document.getElementById('protected-routes').value = (d.protected_routes || []).join(',');
+    renderPlansTable(d.plans || {});
+  } catch(e) {}
+}
+
+function renderPlansTable(plans) {
+  const tbody = document.getElementById('plans-tbody');
+  tbody.innerHTML = '';
+  Object.entries(plans).forEach(([key, plan]) => {
+    tbody.innerHTML += `<tr>
+      <td><input data-field="key" value="${key}" style="width:70px;"></td>
+      <td><input data-field="name" value="${plan.name}"></td>
+      <td><input data-field="price" type="number" step="0.01" value="${plan.price}" style="width:70px;"></td>
+      <td><input data-field="days" type="number" value="${plan.days}" style="width:60px;"></td>
+      <td><button class="btn btn-red" onclick="this.closest('tr').remove()" style="font-size:.7rem;padding:.2rem .5rem;">X</button></td>
+    </tr>`;
+  });
+}
+
+function addPlanRow() {
+  const tbody = document.getElementById('plans-tbody');
+  tbody.innerHTML += `<tr>
+    <td><input data-field="key" value="" placeholder="e.g. weekly" style="width:70px;"></td>
+    <td><input data-field="name" value="" placeholder="Plan name"></td>
+    <td><input data-field="price" type="number" step="0.01" value="9.99" style="width:70px;"></td>
+    <td><input data-field="days" type="number" value="30" style="width:60px;"></td>
+    <td><button class="btn btn-red" onclick="this.closest('tr').remove()" style="font-size:.7rem;padding:.2rem .5rem;">X</button></td>
+  </tr>`;
+}
+
+function savePlans() {
+  const rows = document.querySelectorAll('#plans-tbody tr');
+  const plans = {};
+  rows.forEach(row => {
+    const inputs = row.querySelectorAll('input');
+    const key = inputs[0].value.trim();
+    if (!key) return;
+    plans[key] = {
+      name: inputs[1].value.trim(),
+      price: parseFloat(inputs[2].value) || 0,
+      days: parseInt(inputs[3].value) || 30
+    };
+  });
+  adminFetch('/api/admin/settings/paywall/plans', {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(plans)
+  })
+  .then(r => { if (!r.ok) throw new Error('Failed'); return r.json(); })
+  .then(d => showToast('Plans saved!'))
+  .catch(e => showToast('Failed: ' + e.message, 'error'));
+}
+
+function togglePaywall() {
+  const enabled = document.getElementById('paywall-toggle').checked;
+  adminFetch('/api/admin/settings/paywall/toggle?enabled=' + enabled, {method: 'PUT'})
+    .then(r => r.json())
+    .then(d => showToast('Paywall ' + (d.paywall_enabled ? 'enabled' : 'disabled')))
+    .catch(() => showToast('Failed', 'error'));
+}
+
+function toggleEmailAlerts() {
+  const enabled = document.getElementById('email-alerts-toggle').checked;
+  adminFetch('/api/admin/settings/paywall/email-alerts', {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({enabled})
+  })
+  .then(() => showToast('Email alerts ' + (enabled ? 'enabled' : 'disabled')))
+  .catch(() => showToast('Failed', 'error'));
+}
+
+function saveRoutes() {
+  const routes = document.getElementById('protected-routes').value;
+  adminFetch('/api/admin/settings/paywall/routes?routes=' + encodeURIComponent(routes), {method: 'PUT'})
+    .then(r => r.json())
+    .then(d => showToast('Routes updated'))
+    .catch(() => showToast('Failed', 'error'));
+}
+
 // Check admin session on page load
 window.addEventListener('load', () => {
+  checkUserInfo();
   const token = localStorage.getItem(STORAGE_KEY);
   if (token) {
-    // Verify token is still valid by trying an admin endpoint
     adminFetch('/api/admin/stats')
       .then(r => {
         if (r.ok) {
           document.getElementById('admin-panel').style.display = 'block';
           showAdminSections();
           loadAdminStats();
+          loadPaywallSettings();
         } else {
-          // Token expired or invalid
           localStorage.removeItem(STORAGE_KEY);
           document.getElementById('admin-login').style.display = 'block';
         }
@@ -420,7 +580,6 @@ async function loadAnalytics() {
         <span style="color:${s.win_rate>=93?'var(--green)':'var(--yellow)'}">${s.win_rate}% (${s.total})</span>
       </div>`).join('') || '<div style="color:var(--muted)">No data yet</div>';
   } catch(e) {}
-  // Load platform stats
   try {
     const r = await fetch('/api/analytics/weekly-report');
     const d = await r.json();
