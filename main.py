@@ -1,12 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
-from routers import auth, subscription, tickets, admin, chat, telegram_webhook, analytics, tournaments, referrals, settings, giveaways
+from routers import auth, subscription, tickets, admin, admin_auth, chat, telegram_webhook, analytics, tournaments, referrals, settings, giveaways
 from database import init_db
 
-app = FastAPI(title="Catalyst AI Support", version="2.0")
+app = FastAPI(title="Catalyst AI Support", version="2.1")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+app.include_router(admin_auth.router)   # must be before admin so /api/admin/login is found first
 app.include_router(auth.router)
 app.include_router(subscription.router)
 app.include_router(tickets.router)
@@ -25,7 +26,7 @@ def startup():
 
 @app.get("/")
 def root():
-    return {"status": "AI Support System Active"}
+    return {"status": "AI Support System Active", "version": "2.1"}
 
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard():
@@ -39,7 +40,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <title>CATALYST AI — Dashboard</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#0a0e17;--card:#111827;--border:#1e293b;--accent:#3b82f6;--green:#22c55e;--red:#ef4444;--yellow:#eab308;--text:#e2e8f0;--muted:#64748b;--purple:#a855f7}
+:root{--bg:#0a0e17;--card:#111827;--border:#1e293b;--accent:#3b82f6;--green:#22c55e;--red:#ef4444;--yellow:#eab308;--text:#e2e8f0;--muted:#64748b;--purple:#a855f7;--gold:#ffd700}
 body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
 .header{background:linear-gradient(135deg,#0f172a,#1e1b4b);padding:1.25rem 2rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
 .header h1{font-size:1.4rem;font-weight:700;background:linear-gradient(135deg,var(--accent),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
@@ -65,8 +66,9 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 .btn-green{background:rgba(34,197,94,.15);color:var(--green);border:1px solid rgba(34,197,94,.3)}
 .btn-red{background:rgba(239,68,68,.15);color:var(--red);border:1px solid rgba(239,68,68,.3)}
 .btn-yellow{background:rgba(234,179,8,.15);color:var(--yellow);border:1px solid rgba(234,179,8,.3)}
+.btn-gold{background:rgba(255,215,0,.15);color:var(--gold);border:1px solid rgba(255,215,0,.3)}
 .giveaway-card{background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:8px;padding:1rem;margin-bottom:.75rem}
-.giveaway-card h4{color:var(--green);margin-bottom:.25rem}
+.giveaway-card h4{margin-bottom:.25rem}
 input,textarea,select{background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:8px;padding:.5rem .75rem;color:var(--text);font-size:.85rem;outline:none;width:100%;margin-bottom:.5rem}
 input:focus,textarea:focus{border-color:var(--accent)}
 .chat-container{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden}
@@ -86,6 +88,10 @@ input:focus,textarea:focus{border-color:var(--accent)}
 .toast{position:fixed;bottom:1.5rem;right:1.5rem;padding:.6rem 1rem;border-radius:8px;font-size:.85rem;z-index:1000;display:none}
 .toast.success{background:rgba(34,197,94,.9);color:#fff}
 .toast.error{background:rgba(239,68,68,.9);color:#fff}
+.admin-login-box{background:rgba(26,26,46,.9);padding:15px;border-radius:12px;margin-bottom:15px;border:1px solid var(--border)}
+.admin-login-box h4{color:var(--green);margin-bottom:.5rem}
+.admin-panel-box{background:rgba(10,10,46,.95);padding:15px;border-radius:12px;margin-bottom:15px;border:1px solid rgba(255,215,0,.2)}
+.admin-panel-box h4{color:var(--gold);margin-bottom:.5rem}
 @media(max-width:768px){.header{padding:1rem}.container{padding:1rem}.stat-grid{grid-template-columns:1fr 1fr}}
 </style>
 </head>
@@ -95,15 +101,33 @@ input:focus,textarea:focus{border-color:var(--accent)}
   <div class="status"><div class="dot"></div><span id="status-text">Live</span></div>
 </div>
 <div class="container">
+
+  <!-- Admin Login Panel (hidden by default) -->
+  <div id="admin-login" class="admin-login-box" style="display:none;">
+    <h4>Admin Login</h4>
+    <input type="password" id="admin-password" placeholder="Admin password">
+    <button onclick="adminLogin()" class="btn" style="background:var(--green);color:#000;margin-top:5px;">Login</button>
+    <span id="login-error" style="color:var(--red);margin-left:10px;"></span>
+  </div>
+
+  <!-- Admin Panel (after login) -->
+  <div id="admin-panel" class="admin-panel-box" style="display:none;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <h4 style="margin:0;">Admin Panel</h4>
+      <button onclick="adminLogout()" class="btn btn-red">Logout</button>
+    </div>
+    <div id="admin-stats" style="font-size:.85rem;color:var(--muted);margin-bottom:10px;"></div>
+  </div>
+
   <!-- Tab Bar -->
   <div class="tab-bar">
-    <button class="tab-btn active" onclick="showTab('signals')">📡 Signals</button>
-    <button class="tab-btn" onclick="showTab('analytics')">📊 Analytics</button>
-    <button class="tab-btn" onclick="showTab('tournaments')">🏆 Tournaments</button>
-    <button class="tab-btn" onclick="showTab('giveaways')">🎁 Giveaways</button>
-    <button class="tab-btn" onclick="showTab('referrals')">🔗 Referrals</button>
-    <button class="tab-btn" onclick="showTab('settings')">⚙️ Settings</button>
-    <button class="tab-btn" onclick="showTab('chat')">💬 Chat</button>
+    <button class="tab-btn active" onclick="showTab('signals')">Signals</button>
+    <button class="tab-btn" onclick="showTab('analytics')">Analytics</button>
+    <button class="tab-btn" onclick="showTab('tournaments')">Tournaments</button>
+    <button class="tab-btn" onclick="showTab('giveaways')">Giveaways</button>
+    <button class="tab-btn" onclick="showTab('referrals')">Referrals</button>
+    <button class="tab-btn" onclick="showTab('settings')">Settings</button>
+    <button class="tab-btn" onclick="showTab('chat')">Chat</button>
   </div>
 
   <!-- ═══ Signals ═══ -->
@@ -122,6 +146,10 @@ input:focus,textarea:focus{border-color:var(--accent)}
       <div class="card-title">Per-Pair Breakdown</div>
       <div id="pair-breakdown"></div>
     </div>
+    <div class="card">
+      <div class="card-title">Platform Performance</div>
+      <div id="platform-breakdown"></div>
+    </div>
   </div>
 
   <!-- ═══ Tournaments ═══ -->
@@ -131,12 +159,13 @@ input:focus,textarea:focus{border-color:var(--accent)}
       <div id="tournament-list"></div>
     </div>
     <div class="card" id="create-tournament" style="display:none">
-      <div class="card-title">Create Tournament (Admin)</div>
+      <div class="card-title" style="color:var(--gold);">Create Tournament (Admin)</div>
       <input id="t-name" placeholder="Tournament name">
       <input id="t-start" type="datetime-local"> Start
       <input id="t-end" type="datetime-local"> End
-      <input id="t-prize" type="number" placeholder="Prize pool">
-      <button class="btn btn-primary" onclick="createTournament()">Create</button>
+      <input id="t-fee" type="number" placeholder="Entry fee ($)" value="0">
+      <input id="t-prize" type="number" placeholder="Prize pool ($)">
+      <button class="btn btn-primary" onclick="createTournament()">Create Tournament</button>
     </div>
   </div>
 
@@ -147,14 +176,19 @@ input:focus,textarea:focus{border-color:var(--accent)}
       <div id="giveaway-list"></div>
     </div>
     <div class="card" id="create-giveaway" style="display:none">
-      <div class="card-title">Create Giveaway (Admin)</div>
+      <div class="card-title" style="color:var(--gold);">Create Giveaway (Admin)</div>
       <input id="gw-title" placeholder="Title">
       <textarea id="gw-desc" placeholder="Description"></textarea>
       <input id="gw-start" type="datetime-local"> Start
       <input id="gw-end" type="datetime-local"> End
       <input id="gw-prize" placeholder="Prize">
-      <input id="gw-winners" type="number" value="1" placeholder="Winners">
-      <button class="btn btn-primary" onclick="createGiveaway()">Create</button>
+      <input id="gw-winners" type="number" value="1" placeholder="Number of winners">
+      <button class="btn btn-primary" onclick="createGiveaway()">Create Giveaway</button>
+    </div>
+    <div class="card" id="draw-giveaway" style="display:none">
+      <div class="card-title" style="color:var(--gold);">Draw Winner (Admin)</div>
+      <input id="draw-id" type="number" placeholder="Giveaway ID">
+      <button class="btn btn-gold" onclick="drawGiveaway()">Draw Winners</button>
     </div>
   </div>
 
@@ -211,22 +245,117 @@ input:focus,textarea:focus{border-color:var(--accent)}
 
 <script>
 const UID = localStorage.getItem('user_id') || '1';
-const AID = localStorage.getItem('admin_id') || '';
+const STORAGE_KEY = 'admin_token';
 
-// Check admin
-if (AID) {
-  const ct = document.getElementById('create-tournament');
-  const cg = document.getElementById('create-giveaway');
-  if (ct) ct.style.display = 'block';
-  if (cg) cg.style.display = 'block';
-}
-
+// ── Toast Notification ─────────────────────────────────────────────
 function showToast(msg, type='success') {
   const t = document.getElementById('toast');
   t.textContent = msg; t.className = 'toast ' + type; t.style.display = 'block';
   setTimeout(() => t.style.display = 'none', 3000);
 }
 
+// ── Admin Auth ─────────────────────────────────────────────────────
+function adminLogin() {
+  const password = document.getElementById('admin-password').value;
+  fetch('/api/admin/login', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({password: password})
+  })
+  .then(r => {
+    if (!r.ok) throw new Error('Wrong password');
+    return r.json();
+  })
+  .then(data => {
+    localStorage.setItem(STORAGE_KEY, data.token);
+    document.getElementById('login-error').textContent = '';
+    document.getElementById('admin-login').style.display = 'none';
+    document.getElementById('admin-panel').style.display = 'block';
+    showAdminSections();
+    loadAdminStats();
+  })
+  .catch(err => {
+    document.getElementById('login-error').textContent = 'Incorrect password';
+  });
+}
+
+function adminLogout() {
+  const token = localStorage.getItem(STORAGE_KEY);
+  if (token) {
+    fetch('/api/admin/logout', {
+      method: 'POST',
+      headers: {'Authorization': 'Bearer ' + token}
+    });
+  }
+  localStorage.removeItem(STORAGE_KEY);
+  document.getElementById('admin-panel').style.display = 'none';
+  document.getElementById('admin-login').style.display = 'block';
+  hideAdminSections();
+}
+
+function adminFetch(url, options = {}) {
+  const token = localStorage.getItem(STORAGE_KEY);
+  if (!token) return Promise.reject('Not logged in');
+  options.headers = options.headers || {};
+  options.headers['Authorization'] = 'Bearer ' + token;
+  return fetch(url, options);
+}
+
+function showAdminSections() {
+  const ct = document.getElementById('create-tournament');
+  const cg = document.getElementById('create-giveaway');
+  const dg = document.getElementById('draw-giveaway');
+  if (ct) ct.style.display = 'block';
+  if (cg) cg.style.display = 'block';
+  if (dg) dg.style.display = 'block';
+}
+
+function hideAdminSections() {
+  const ct = document.getElementById('create-tournament');
+  const cg = document.getElementById('create-giveaway');
+  const dg = document.getElementById('draw-giveaway');
+  if (ct) ct.style.display = 'none';
+  if (cg) cg.style.display = 'none';
+  if (dg) dg.style.display = 'none';
+}
+
+async function loadAdminStats() {
+  try {
+    const r = await adminFetch('/api/admin/stats');
+    if (!r.ok) throw new Error('Unauthorized');
+    const d = await r.json();
+    document.getElementById('admin-stats').innerHTML =
+      'Users: ' + d.total_users + ' | Premium: ' + d.premium_users +
+      ' | Open Tickets: ' + d.open_tickets + ' | Signals: ' + d.total_signals;
+  } catch(e) {}
+}
+
+// Check admin session on page load
+window.addEventListener('load', () => {
+  const token = localStorage.getItem(STORAGE_KEY);
+  if (token) {
+    // Verify token is still valid by trying an admin endpoint
+    adminFetch('/api/admin/stats')
+      .then(r => {
+        if (r.ok) {
+          document.getElementById('admin-panel').style.display = 'block';
+          showAdminSections();
+          loadAdminStats();
+        } else {
+          // Token expired or invalid
+          localStorage.removeItem(STORAGE_KEY);
+          document.getElementById('admin-login').style.display = 'block';
+        }
+      })
+      .catch(() => {
+        document.getElementById('admin-login').style.display = 'block';
+      });
+  } else {
+    document.getElementById('admin-login').style.display = 'block';
+  }
+});
+
+// ── Tab Navigation ─────────────────────────────────────────────────
 function showTab(tab) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
@@ -257,11 +386,11 @@ async function loadSignals() {
     const pending = data.filter(s => s.outcome === 'pending').slice(0, 20);
     document.getElementById('signal-list').innerHTML = pending.length ? pending.map(s => `
       <div style="display:flex;justify-content:space-between;align-items:center;padding:.6rem 0;border-bottom:1px solid var(--border)">
-        <div><strong>${s.symbol}</strong> <span style="color:var(--muted);font-size:.8rem">${s.direction} ${s.timeframe}</span></div>
+        <div><strong>${s.symbol}</strong> <span style="color:var(--muted);font-size:.8rem">${s.direction} ${s.timeframe} [${s.platform||'N/A'}]</span></div>
         <div style="display:flex;gap:.4rem">
-          <button class="btn btn-green" onclick="reportOutcome(${s.id},'win')">✅ Win</button>
-          <button class="btn btn-red" onclick="reportOutcome(${s.id},'loss')">❌ Loss</button>
-          <button class="btn btn-yellow" onclick="reportOutcome(${s.id},'ignored')">⏭️ Ignored</button>
+          <button class="btn btn-green" onclick="reportOutcome(${s.id},'win')">Win</button>
+          <button class="btn btn-red" onclick="reportOutcome(${s.id},'loss')">Loss</button>
+          <button class="btn btn-yellow" onclick="reportOutcome(${s.id},'ignored')">Ignored</button>
         </div>
       </div>`).join('') : '<div style="color:var(--muted);padding:1rem;text-align:center">No pending signals</div>';
   } catch(e) {}
@@ -269,8 +398,7 @@ async function loadSignals() {
 
 async function reportOutcome(id, outcome) {
   await fetch('/api/analytics/outcome/' + id + '?outcome=' + outcome, {method:'PATCH'});
-  const emoji = {win:'✅',loss:'❌',ignored:'⏭️'};
-  showToast(emoji[outcome] + ' Recorded: ' + outcome.toUpperCase());
+  showToast('Recorded: ' + outcome.toUpperCase());
   loadSignals();
 }
 
@@ -292,6 +420,17 @@ async function loadAnalytics() {
         <span style="color:${s.win_rate>=93?'var(--green)':'var(--yellow)'}">${s.win_rate}% (${s.total})</span>
       </div>`).join('') || '<div style="color:var(--muted)">No data yet</div>';
   } catch(e) {}
+  // Load platform stats
+  try {
+    const r = await fetch('/api/analytics/weekly-report');
+    const d = await r.json();
+    const platforms = d.by_platform || {};
+    document.getElementById('platform-breakdown').innerHTML = Object.entries(platforms).map(([p, s]) => `
+      <div style="display:flex;justify-content:space-between;padding:.4rem 0;border-bottom:1px solid var(--border)">
+        <span>${p}</span>
+        <span style="color:${s.win_rate>=93?'var(--green)':'var(--yellow)'}">${s.win_rate}% (${s.total})</span>
+      </div>`).join('') || '<div style="color:var(--muted)">No platform data</div>';
+  } catch(e) {}
 }
 
 // ── Tournaments ──────────────────────────────────────────────────
@@ -301,8 +440,8 @@ async function loadTournaments() {
     const data = await r.json();
     document.getElementById('tournament-list').innerHTML = data.length ? data.map(t => `
       <div class="giveaway-card">
-        <h4 style="color:var(--purple)">🏆 ${t.name}</h4>
-        <p style="font-size:.8rem;color:var(--muted)">${t.start_time} → ${t.end_time}</p>
+        <h4 style="color:var(--purple)">${t.name}</h4>
+        <p style="font-size:.8rem;color:var(--muted)">${t.start_time} to ${t.end_time}</p>
         <p>Prize: $${t.prize_pool} | Entry: $${t.entry_fee} | ${t.participants} players | ${t.status}</p>
         <button class="btn btn-primary" onclick="joinTournament(${t.id})" style="margin-top:.5rem">Join</button>
       </div>`).join('') : '<div style="color:var(--muted)">No tournaments</div>';
@@ -319,8 +458,9 @@ function createTournament() {
     name: document.getElementById('t-name').value,
     start: new Date(document.getElementById('t-start').value).toISOString(),
     end: new Date(document.getElementById('t-end').value).toISOString(),
+    entry_fee: document.getElementById('t-fee').value || '0',
     prize_pool: document.getElementById('t-prize').value || '0',
-    admin_id: AID || UID
+    admin_id: UID
   });
   fetch('/api/tournaments/create', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body})
     .then(r=>r.json()).then(d => { showToast('Tournament created! ID: '+d.tournament_id); loadTournaments(); });
@@ -333,7 +473,7 @@ async function loadGiveaways() {
     const data = await r.json();
     document.getElementById('giveaway-list').innerHTML = data.length ? data.map(g => `
       <div class="giveaway-card">
-        <h4>🎁 ${g.title}</h4>
+        <h4 style="color:var(--green)">${g.title}</h4>
         <p>${g.description || ''}</p>
         <p style="font-size:.85rem">Prize: <strong>${g.prize}</strong> | Ends: ${new Date(g.end_time).toLocaleString()} | ${g.participants} entries</p>
         <button class="btn btn-primary" onclick="joinGiveaway(${g.id})" style="margin-top:.5rem">Join Giveaway</button>
@@ -343,7 +483,7 @@ async function loadGiveaways() {
 
 function joinGiveaway(id) {
   fetch('/api/giveaways/join/'+id+'?user_id='+UID, {method:'POST'})
-    .then(r=>r.json()).then(d => { showToast(d.status === 'joined' ? 'You\'re in! 🎉' : d.status); loadGiveaways(); });
+    .then(r=>r.json()).then(d => { showToast(d.status === 'joined' ? 'You are in!' : d.status); loadGiveaways(); });
 }
 
 function createGiveaway() {
@@ -355,8 +495,29 @@ function createGiveaway() {
     prize: document.getElementById('gw-prize').value,
     winners_count: document.getElementById('gw-winners').value || '1'
   });
-  fetch('/api/giveaways/create', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded', 'x-admin-id': AID || UID}, body})
-    .then(r=>r.json()).then(d => { showToast('Giveaway created! ID: '+d.giveaway_id); loadGiveaways(); });
+  adminFetch('/api/giveaways/create', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body})
+    .then(r => {
+      if (!r.ok) throw new Error('Admin auth required');
+      return r.json();
+    })
+    .then(d => { showToast('Giveaway created! ID: '+d.giveaway_id); loadGiveaways(); })
+    .catch(e => showToast('Failed: ' + e.message, 'error'));
+}
+
+function drawGiveaway() {
+  const id = document.getElementById('draw-id').value;
+  if (!id) return showToast('Enter a giveaway ID', 'error');
+  adminFetch('/api/giveaways/draw/'+id, {method:'POST'})
+    .then(r => {
+      if (!r.ok) return r.json().then(d => { throw new Error(d.detail || 'Error'); });
+      return r.json();
+    })
+    .then(d => {
+      const winners = d.winners.map(w => w.username || 'User#'+w.id).join(', ');
+      showToast('Winners: ' + winners);
+      loadGiveaways();
+    })
+    .catch(e => showToast('Draw failed: ' + e.message, 'error'));
 }
 
 // ── Referrals ────────────────────────────────────────────────────
@@ -435,6 +596,14 @@ function escapeHtml(t) { const d=document.createElement('div'); d.textContent=t;
 
 // ── Init ─────────────────────────────────────────────────────────
 loadSignals();
+
+// Auto-refresh analytics every 30 seconds when on analytics tab
+setInterval(() => {
+  const analyticsTab = document.getElementById('tab-analytics');
+  if (analyticsTab && analyticsTab.classList.contains('active')) {
+    loadAnalytics();
+  }
+}, 30000);
 </script>
 </body>
 </html>"""

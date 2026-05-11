@@ -3,15 +3,9 @@ from database import SessionLocal, Giveaway, GiveawayParticipant, User
 from datetime import datetime
 import random
 
-from config import settings
+from routers.admin_auth import verify_admin_token
 
 router = APIRouter(prefix="/api/giveaways", tags=["giveaways"])
-
-# Admin verification
-def verify_admin(x_admin_id: int = Header(None)):
-    if x_admin_id != settings.ADMIN_CHAT_ID:
-        raise HTTPException(403, "Admin access required")
-    return x_admin_id
 
 
 # ── Admin endpoints ──────────────────────────────────────────────────
@@ -20,15 +14,19 @@ def verify_admin(x_admin_id: int = Header(None)):
 def create_giveaway(
     title: str, description: str, start_time: str, end_time: str,
     prize: str, winners_count: int = 1,
-    admin_id: int = Depends(verify_admin)
+    token: str = Depends(verify_admin_token)
 ):
+    """Admin-only: create a new giveaway."""
     db = SessionLocal()
+    # Resolve admin user from token — use user_id 1 as fallback
+    admin_user = db.query(User).filter_by(is_admin=True).first()
+    created_by = admin_user.id if admin_user else 1
     g = Giveaway(
         title=title, description=description,
         start_time=datetime.fromisoformat(start_time),
         end_time=datetime.fromisoformat(end_time),
         prize=prize, winners_count=winners_count,
-        created_by=admin_id,
+        created_by=created_by,
         status="upcoming"
     )
     db.add(g)
@@ -37,8 +35,10 @@ def create_giveaway(
     db.close()
     return {"giveaway_id": g.id}
 
+
 @router.put("/update/{giveaway_id}")
-def update_giveaway(giveaway_id: int, fields: dict, admin_id: int = Depends(verify_admin)):
+def update_giveaway(giveaway_id: int, fields: dict, token: str = Depends(verify_admin_token)):
+    """Admin-only: update giveaway fields."""
     db = SessionLocal()
     g = db.query(Giveaway).filter_by(id=giveaway_id).first()
     if not g:
@@ -54,8 +54,10 @@ def update_giveaway(giveaway_id: int, fields: dict, admin_id: int = Depends(veri
     db.close()
     return {"status": "updated"}
 
+
 @router.post("/draw/{giveaway_id}")
-def draw_winners(giveaway_id: int, admin_id: int = Depends(verify_admin)):
+def draw_winners(giveaway_id: int, token: str = Depends(verify_admin_token)):
+    """Admin-only: randomly draw winners for a giveaway."""
     db = SessionLocal()
     g = db.query(Giveaway).filter_by(id=giveaway_id).first()
     if not g:
@@ -87,18 +89,20 @@ def draw_winners(giveaway_id: int, admin_id: int = Depends(verify_admin)):
 
 @router.get("/active")
 def active_giveaways():
+    """List all currently active giveaways."""
     db = SessionLocal()
     now = datetime.utcnow()
     giveaways = db.query(Giveaway).filter(
         Giveaway.start_time <= now,
         Giveaway.end_time >= now,
-        Giveaway.status == "active"
+        Giveaway.status.in_(["active", "upcoming"])
     ).all()
     result = [
         {
             "id": g.id, "title": g.title,
             "description": g.description, "prize": g.prize,
-            "end_time": str(g.end_time),
+            "end_time": str(g.end_time), "status": g.status,
+            "winners_count": g.winners_count,
             "participants": db.query(GiveawayParticipant).filter_by(giveaway_id=g.id).count()
         }
         for g in giveaways
@@ -106,8 +110,10 @@ def active_giveaways():
     db.close()
     return result
 
+
 @router.get("/list")
 def list_giveaways(status: str = None):
+    """List all giveaways, optionally filtered by status."""
     db = SessionLocal()
     query = db.query(Giveaway)
     if status:
@@ -126,8 +132,10 @@ def list_giveaways(status: str = None):
     db.close()
     return result
 
+
 @router.post("/join/{giveaway_id}")
 def join_giveaway(giveaway_id: int, user_id: int):
+    """Join a giveaway as a regular user."""
     db = SessionLocal()
     g = db.query(Giveaway).filter_by(id=giveaway_id).first()
     if not g:
