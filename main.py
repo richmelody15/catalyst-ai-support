@@ -5,7 +5,7 @@ from routers import auth, subscription, tickets, admin, admin_auth, chat, telegr
 from database import init_db
 from middleware import paywall_middleware
 
-app = FastAPI(title="Catalyst AI Support", version="3.0")
+app = FastAPI(title="Catalyst AI Support", version="3.1")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.middleware("http")(paywall_middleware)
 
@@ -30,7 +30,7 @@ def startup():
 
 @app.get("/")
 def root():
-    return {"status": "AI Support System Active", "version": "3.0"}
+    return {"status": "AI Support System Active", "version": "3.1"}
 
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard():
@@ -123,9 +123,11 @@ input:focus,textarea:focus{border-color:var(--accent)}
   <!-- Admin Login Panel (hidden by default) -->
   <div id="admin-login" class="admin-login-box" style="display:none;">
     <h4>Admin Login</h4>
-    <input type="password" id="admin-password" placeholder="Admin password">
-    <button onclick="adminLogin()" class="btn" style="background:var(--green);color:#000;margin-top:5px;">Login</button>
-    <span id="login-error" style="color:var(--red);margin-left:10px;"></span>
+    <input type="email" id="admin-email" placeholder="Email address">
+    <input type="password" id="admin-password" placeholder="Password">
+    <div class="toggle" style="margin:5px 0 8px;"><input type="checkbox" id="remember-me"><label>Remember Me</label></div>
+    <button onclick="adminLogin()" class="btn" style="background:var(--green);color:#000;width:100%;padding:10px;">Login</button>
+    <p id="login-error" style="color:var(--red);margin-top:8px;"></p>
   </div>
 
   <!-- Admin Panel (after login) -->
@@ -135,6 +137,12 @@ input:focus,textarea:focus{border-color:var(--accent)}
       <button onclick="adminLogout()" class="btn btn-red">Logout</button>
     </div>
     <div id="admin-stats" style="font-size:.85rem;color:var(--muted);margin-bottom:10px;"></div>
+
+    <!-- Activity Log -->
+    <div style="background:rgba(255,255,255,.03);padding:10px;border-radius:8px;margin-bottom:12px;max-height:150px;overflow-y:auto;">
+      <h5 style="color:var(--gold);margin-bottom:5px;font-size:.8rem;">Recent Activity</h5>
+      <div id="activity-list" style="font-size:.75rem;color:var(--muted);"></div>
+    </div>
 
     <!-- Paywall Settings -->
     <div id="admin-paywall-settings" style="margin-top:15px;border-top:1px solid var(--border);padding-top:15px;">
@@ -286,7 +294,7 @@ input:focus,textarea:focus{border-color:var(--accent)}
 
 <script>
 const UID = localStorage.getItem('user_id') || '1';
-const STORAGE_KEY = 'admin_token';
+const STORAGE_KEY = 'admin_access_token';
 
 // ── Toast Notification ─────────────────────────────────────────────
 function showToast(msg, type='success') {
@@ -329,45 +337,79 @@ function saveUserInfo() {
   .catch(() => showToast('Failed to save profile', 'error'));
 }
 
-// ── Admin Auth ─────────────────────────────────────────────────────
-function adminLogin() {
+// ── Admin Auth (JWT with refresh tokens) ───────────────────────────
+async function adminLogin() {
+  const email = document.getElementById('admin-email').value;
   const password = document.getElementById('admin-password').value;
-  fetch('/api/admin/login', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({password: password})
-  })
-  .then(r => {
-    if (!r.ok) throw new Error('Wrong password');
-    return r.json();
-  })
-  .then(data => {
-    localStorage.setItem(STORAGE_KEY, data.token);
+  const remember = document.getElementById('remember-me').checked;
+  if (!email || !password) return;
+  try {
+    const resp = await fetch('/api/admin/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ email, password, remember_me: remember, platform: 'web' }),
+      credentials: 'include'
+    });
+    if (!resp.ok) {
+      document.getElementById('login-error').textContent = 'Invalid email or password';
+      return;
+    }
+    const data = await resp.json();
+    localStorage.setItem(STORAGE_KEY, data.access_token);
     document.getElementById('login-error').textContent = '';
     document.getElementById('admin-login').style.display = 'none';
     document.getElementById('admin-panel').style.display = 'block';
     showAdminSections();
     loadAdminStats();
     loadPaywallSettings();
-  })
-  .catch(err => {
-    document.getElementById('login-error').textContent = 'Incorrect password';
-  });
+    loadActivityLog();
+  } catch(e) {
+    document.getElementById('login-error').textContent = 'Connection error';
+  }
 }
 
-function adminLogout() {
-  const token = localStorage.getItem(STORAGE_KEY);
-  if (token) {
-    fetch('/api/admin/logout', {
-      method: 'POST',
-      headers: {'Authorization': 'Bearer ' + token}
-    });
-  }
+async function adminLogout() {
+  await fetch('/api/admin/logout', { method: 'POST', credentials: 'include' });
   localStorage.removeItem(STORAGE_KEY);
   document.getElementById('admin-panel').style.display = 'none';
   document.getElementById('admin-login').style.display = 'block';
   hideAdminSections();
 }
+
+// Auto-login via refresh token (httpOnly cookie)
+async function tryAutoLogin() {
+  try {
+    const resp = await fetch('/api/admin/refresh', { method: 'POST', credentials: 'include' });
+    if (resp.ok) {
+      const data = await resp.json();
+      localStorage.setItem(STORAGE_KEY, data.access_token);
+      document.getElementById('admin-login').style.display = 'none';
+      document.getElementById('admin-panel').style.display = 'block';
+      showAdminSections();
+      loadAdminStats();
+      loadPaywallSettings();
+      loadActivityLog();
+      return true;
+    }
+  } catch(e) {}
+  document.getElementById('admin-login').style.display = 'block';
+  return false;
+}
+
+// Activity Log
+function loadActivityLog() {
+  adminFetch('/api/admin/activity?limit=15')
+    .then(r => r.json())
+    .then(data => {
+      let html = '';
+      data.forEach(log => {
+        html += '<div style="border-bottom:1px solid var(--border);padding:3px 0;"><strong>' + log.action + '</strong> &mdash; ' + new Date(log.timestamp).toLocaleString() + (log.details ? '<br><small>' + log.details + '</small>' : '') + '</div>';
+      });
+      document.getElementById('activity-list').innerHTML = html || '<div>No activity yet</div>';
+    })
+    .catch(() => {});
+}
+setInterval(() => { if (localStorage.getItem(STORAGE_KEY)) loadActivityLog(); }, 30000);
 
 function adminFetch(url, options = {}) {
   const token = localStorage.getItem(STORAGE_KEY);
@@ -495,6 +537,7 @@ window.addEventListener('load', () => {
   checkUserInfo();
   const token = localStorage.getItem(STORAGE_KEY);
   if (token) {
+    // Try existing access token first
     adminFetch('/api/admin/stats')
       .then(r => {
         if (r.ok) {
@@ -502,16 +545,17 @@ window.addEventListener('load', () => {
           showAdminSections();
           loadAdminStats();
           loadPaywallSettings();
+          loadActivityLog();
         } else {
+          // Access token expired, try refresh via cookie
           localStorage.removeItem(STORAGE_KEY);
-          document.getElementById('admin-login').style.display = 'block';
+          tryAutoLogin();
         }
       })
-      .catch(() => {
-        document.getElementById('admin-login').style.display = 'block';
-      });
+      .catch(() => tryAutoLogin());
   } else {
-    document.getElementById('admin-login').style.display = 'block';
+    // No access token, try refresh cookie for auto-login
+    tryAutoLogin();
   }
 });
 

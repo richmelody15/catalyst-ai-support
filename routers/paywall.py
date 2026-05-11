@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from database import SessionLocal, AppSettings
-from routers.admin_auth import verify_admin_token
+from routers.admin_auth import verify_admin_token, log_activity
 from pydantic import BaseModel
 import json
 
@@ -24,7 +24,7 @@ def _get_app_settings():
 # ── Admin Paywall Settings ──────────────────────────────────────────
 
 @router.get("/paywall")
-def get_paywall_settings(token: str = Depends(verify_admin_token)):
+def get_paywall_settings(admin_id: int = Depends(verify_admin_token)):
     """Admin-only: get current paywall settings including plans and protected routes."""
     app_settings, db = _get_app_settings()
     try:
@@ -42,19 +42,19 @@ def get_paywall_settings(token: str = Depends(verify_admin_token)):
 
 
 @router.put("/paywall/toggle")
-def toggle_paywall(enabled: bool, token: str = Depends(verify_admin_token)):
+def toggle_paywall(enabled: bool, admin_id: int = Depends(verify_admin_token)):
     """Admin-only: enable or disable the paywall."""
     app_settings, db = _get_app_settings()
     app_settings.paywall_enabled = enabled
     db.commit()
+    log_activity(admin_id, "toggle_paywall", f"Paywall {'enabled' if enabled else 'disabled'}")
     db.close()
     return {"paywall_enabled": enabled}
 
 
 @router.put("/paywall/plans")
-def update_plans(plans: dict, token: str = Depends(verify_admin_token)):
+def update_plans(plans: dict, admin_id: int = Depends(verify_admin_token)):
     """Admin-only: update subscription plans. Each plan must have name, price, and days."""
-    # Validate
     for key, plan in plans.items():
         if not isinstance(plan, dict):
             raise HTTPException(400, f"Invalid plan format for {key}")
@@ -68,27 +68,30 @@ def update_plans(plans: dict, token: str = Depends(verify_admin_token)):
     app_settings, db = _get_app_settings()
     app_settings.plans_json = json.dumps(plans)
     db.commit()
+    log_activity(admin_id, "update_plans", f"Updated {len(plans)} subscription plans")
     db.close()
     return {"plans": plans}
 
 
 @router.put("/paywall/routes")
-def update_routes(routes: str, token: str = Depends(verify_admin_token)):
+def update_routes(routes: str, admin_id: int = Depends(verify_admin_token)):
     """Admin-only: update protected routes (comma-separated)."""
     app_settings, db = _get_app_settings()
     app_settings.protected_routes = routes
     db.commit()
+    log_activity(admin_id, "update_routes", f"Protected routes: {routes}")
     db.close()
     return {"protected_routes": [r.strip() for r in routes.split(",") if r.strip()]}
 
 
 @router.put("/paywall/email-alerts")
-def toggle_email_alerts(data: dict, token: str = Depends(verify_admin_token)):
+def toggle_email_alerts(data: dict, admin_id: int = Depends(verify_admin_token)):
     """Admin-only: toggle email alerts on paywall bypass attempts."""
     enabled = data.get("enabled", True)
     app_settings, db = _get_app_settings()
     app_settings.email_alerts = enabled
     db.commit()
+    log_activity(admin_id, "toggle_email_alerts", f"Email alerts {'enabled' if enabled else 'disabled'}")
     db.close()
     return {"email_alerts": enabled}
 

@@ -3,7 +3,7 @@ from database import SessionLocal, Giveaway, GiveawayParticipant, User
 from datetime import datetime
 import random
 
-from routers.admin_auth import verify_admin_token
+from routers.admin_auth import verify_admin_token, log_activity
 
 router = APIRouter(prefix="/api/giveaways", tags=["giveaways"])
 
@@ -14,30 +14,28 @@ router = APIRouter(prefix="/api/giveaways", tags=["giveaways"])
 def create_giveaway(
     title: str, description: str, start_time: str, end_time: str,
     prize: str, winners_count: int = 1,
-    token: str = Depends(verify_admin_token)
+    admin_id: int = Depends(verify_admin_token)
 ):
     """Admin-only: create a new giveaway."""
     db = SessionLocal()
-    # Resolve admin user from token — use user_id 1 as fallback
-    admin_user = db.query(User).filter_by(is_admin=True).first()
-    created_by = admin_user.id if admin_user else 1
     g = Giveaway(
         title=title, description=description,
         start_time=datetime.fromisoformat(start_time),
         end_time=datetime.fromisoformat(end_time),
         prize=prize, winners_count=winners_count,
-        created_by=created_by,
+        created_by=admin_id,
         status="upcoming"
     )
     db.add(g)
     db.commit()
     db.refresh(g)
+    log_activity(admin_id, "create_giveaway", f"Created giveaway '{title}'")
     db.close()
     return {"giveaway_id": g.id}
 
 
 @router.put("/update/{giveaway_id}")
-def update_giveaway(giveaway_id: int, fields: dict, token: str = Depends(verify_admin_token)):
+def update_giveaway(giveaway_id: int, fields: dict, admin_id: int = Depends(verify_admin_token)):
     """Admin-only: update giveaway fields."""
     db = SessionLocal()
     g = db.query(Giveaway).filter_by(id=giveaway_id).first()
@@ -51,12 +49,13 @@ def update_giveaway(giveaway_id: int, fields: dict, token: str = Depends(verify_
             else:
                 setattr(g, f, fields[f])
     db.commit()
+    log_activity(admin_id, "update_giveaway", f"Updated giveaway #{giveaway_id}")
     db.close()
     return {"status": "updated"}
 
 
 @router.post("/draw/{giveaway_id}")
-def draw_winners(giveaway_id: int, token: str = Depends(verify_admin_token)):
+def draw_winners(giveaway_id: int, admin_id: int = Depends(verify_admin_token)):
     """Admin-only: randomly draw winners for a giveaway."""
     db = SessionLocal()
     g = db.query(Giveaway).filter_by(id=giveaway_id).first()
@@ -81,6 +80,7 @@ def draw_winners(giveaway_id: int, token: str = Depends(verify_admin_token)):
             for u in winner_users
         ]
     }
+    log_activity(admin_id, "draw_giveaway", f"Drew winners for giveaway #{giveaway_id}")
     db.close()
     return result
 
@@ -151,7 +151,6 @@ def join_giveaway(giveaway_id: int, user_id: int):
         return {"status": "already_joined"}
     participant = GiveawayParticipant(giveaway_id=giveaway_id, user_id=user_id)
     db.add(participant)
-    # Auto-activate if start time reached
     if g.status == "upcoming" and now >= g.start_time:
         g.status = "active"
     db.commit()

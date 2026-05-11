@@ -1,1 +1,4 @@
 support.db
+.jwt_secret
+__pycache__
+.env

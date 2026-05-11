@@ -6,3 +6,5 @@ python-telegram-bot[job-queue]
 httpx
 stripe
 python-dotenv
+PyJWT
+bcrypt

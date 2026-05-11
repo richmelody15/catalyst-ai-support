@@ -181,5 +181,49 @@ class AppSettings(Base):
     email_alerts = Column(Boolean, default=True)
 
 
+# ── Admin Auth (JWT) ────────────────────────────────────────────────
+
+class AdminUser(Base):
+    __tablename__ = "admin_users"
+    id = Column(Integer, primary_key=True)
+    email = Column(String(120), unique=True, index=True)
+    password_hash = Column(String(120))
+    full_name = Column(String(100))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_login = Column(DateTime, nullable=True)
+
+    def set_password(self, password: str):
+        import bcrypt
+        self.password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+    def verify_password(self, password: str) -> bool:
+        import bcrypt
+        return bcrypt.checkpw(password.encode('utf-8'), self.password_hash.encode('utf-8'))
+
+
+class AdminSession(Base):
+    __tablename__ = "admin_sessions"
+    id = Column(Integer, primary_key=True)
+    admin_id = Column(Integer, ForeignKey("admin_users.id"))
+    refresh_token = Column(String(255), unique=True, index=True)
+    user_agent = Column(String(255), nullable=True)
+    ip_address = Column(String(45), nullable=True)
+    platform = Column(String(20), default="web")
+    device_info = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime)
+    is_active = Column(Boolean, default=True)
+
+
+class AdminActivityLog(Base):
+    __tablename__ = "admin_activity_log"
+    id = Column(Integer, primary_key=True)
+    admin_id = Column(Integer, ForeignKey("admin_users.id"))
+    action = Column(String(100))
+    details = Column(Text, nullable=True)
+    ip_address = Column(String(45), nullable=True)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
