@@ -66,6 +66,8 @@ async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Broadcast sent.")
 
 def setup_bot() -> Application:
+    if not settings.TELEGRAM_BOT_TOKEN:
+        return None
     app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("subscribe", subscribe))

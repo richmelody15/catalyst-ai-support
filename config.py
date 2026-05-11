@@ -2,8 +2,8 @@ import os
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    ZAI_API_KEY: str
-    TELEGRAM_BOT_TOKEN: str
+    ZAI_API_KEY: str = ""
+    TELEGRAM_BOT_TOKEN: str = ""
     DATABASE_URL: str = "sqlite:///support.db"
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
