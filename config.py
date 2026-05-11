@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     SMTP_USER: str = ""
     SMTP_PASS: str = ""
     JWT_SECRET: str = ""
+    # Push notification VAPID keys
+    VAPID_PRIVATE_KEY: str = ""
+    VAPID_PUBLIC_KEY: str = ""
+    VAPID_CLAIM_EMAIL: str = "mailto:admin@catalystsignals.com"
+    # Domain monitoring
+    DOMAIN_NAME: str = "catalyst-signals.up.railway.app"
 
     class Config:
         env_file = ".env"

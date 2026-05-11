@@ -181,6 +181,47 @@ class AppSettings(Base):
     email_alerts = Column(Boolean, default=True)
 
 
+# ── VIP Challenges ──────────────────────────────────────────────────
+
+class VIPChallenge(Base):
+    __tablename__ = "vip_challenges"
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100))
+    description = Column(Text, default="")
+    start_time = Column(DateTime)
+    end_time = Column(DateTime)
+    entry_fee = Column(Float, default=0.0)
+    prize_pool = Column(Float, default=0.0)
+    status = Column(String(20), default="upcoming")   # upcoming, active, ended
+    created_by = Column(Integer, ForeignKey("admin_users.id"))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    participants = relationship("VIPChallengeParticipant", back_populates="challenge")
+
+
+class VIPChallengeParticipant(Base):
+    __tablename__ = "vip_challenge_participants"
+    id = Column(Integer, primary_key=True)
+    challenge_id = Column(Integer, ForeignKey("vip_challenges.id"))
+    user_id = Column(Integer, ForeignKey("users.id"))
+    joined_at = Column(DateTime, default=datetime.utcnow)
+    score = Column(Float, default=0.0)
+    total_trades = Column(Integer, default=0)
+    wins = Column(Integer, default=0)
+    losses = Column(Integer, default=0)
+    challenge = relationship("VIPChallenge", back_populates="participants")
+
+
+# ── Community Chat Messages ────────────────────────────────────────
+
+class CommunityMessage(Base):
+    __tablename__ = "community_messages"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    username = Column(String(100))
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 # ── Admin Auth (JWT) ────────────────────────────────────────────────
 
 class AdminUser(Base):

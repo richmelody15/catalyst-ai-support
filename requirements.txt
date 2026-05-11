@@ -8,3 +8,5 @@ stripe
 python-dotenv
 PyJWT
 bcrypt
+reportlab
+python-whois

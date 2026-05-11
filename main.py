@@ -2,10 +2,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from routers import auth, subscription, tickets, admin, admin_auth, chat, telegram_webhook, analytics, tournaments, referrals, settings, giveaways, paywall, notifications
+from routers import vip_challenge, full_analytics, community
 from database import init_db
 from middleware import paywall_middleware
 
-app = FastAPI(title="Catalyst AI Support", version="3.1")
+app = FastAPI(title="Catalyst AI Support", version="4.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.middleware("http")(paywall_middleware)
 
@@ -19,10 +20,13 @@ app.include_router(notifications.router)
 app.include_router(chat.router)
 app.include_router(telegram_webhook.router)
 app.include_router(analytics.router)
+app.include_router(full_analytics.router)
 app.include_router(tournaments.router)
+app.include_router(vip_challenge.router)
 app.include_router(referrals.router)
 app.include_router(settings.router)
 app.include_router(giveaways.router)
+app.include_router(community.router)
 
 @app.on_event("startup")
 def startup():
@@ -30,7 +34,7 @@ def startup():
 
 @app.get("/")
 def root():
-    return {"status": "AI Support System Active", "version": "3.1"}
+    return {"status": "AI Support System Active", "version": "4.0"}
 
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard():
@@ -42,17 +46,23 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CATALYST AI — Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#0a0e17;--card:#111827;--border:#1e293b;--accent:#3b82f6;--green:#22c55e;--red:#ef4444;--yellow:#eab308;--text:#e2e8f0;--muted:#64748b;--purple:#a855f7;--gold:#ffd700}
-body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+body.light-mode{--bg:#f1f5f9;--card:#ffffff;--border:#e2e8f0;--text:#1e293b;--muted:#64748b}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;transition:background .3s,color .3s}
 .header{background:linear-gradient(135deg,#0f172a,#1e1b4b);padding:1.25rem 2rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+body.light-mode .header{background:linear-gradient(135deg,#3b82f6,#7c3aed)}
 .header h1{font-size:1.4rem;font-weight:700;background:linear-gradient(135deg,var(--accent),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+body.light-mode .header h1{-webkit-text-fill-color:#fff}
 .header .status{display:flex;align-items:center;gap:.5rem;font-size:.8rem;color:var(--muted)}
+body.light-mode .header .status{color:#fff}
 .header .dot{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.theme-toggle{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);border-radius:20px;padding:4px 10px;color:#fff;cursor:pointer;font-size:.75rem}
 .container{max-width:1400px;margin:0 auto;padding:1.25rem}
-.tab-bar{display:flex;gap:.4rem;margin-bottom:1rem;overflow-x:auto;padding-bottom:.25rem}
+.tab-bar{display:flex;gap:.4rem;margin-bottom:1rem;overflow-x:auto;padding-bottom:.25rem;flex-wrap:wrap}
 .tab-btn{padding:.5rem 1rem;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:8px;font-size:.8rem;cursor:pointer;color:var(--muted);transition:all .2s;white-space:nowrap}
 .tab-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 .tab-btn:hover:not(.active){border-color:var(--accent);color:var(--text)}
@@ -71,6 +81,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 .btn-red{background:rgba(239,68,68,.15);color:var(--red);border:1px solid rgba(239,68,68,.3)}
 .btn-yellow{background:rgba(234,179,8,.15);color:var(--yellow);border:1px solid rgba(234,179,8,.3)}
 .btn-gold{background:rgba(255,215,0,.15);color:var(--gold);border:1px solid rgba(255,215,0,.3)}
+.btn-purple{background:rgba(168,85,247,.15);color:var(--purple);border:1px solid rgba(168,85,247,.3)}
 .giveaway-card{background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:8px;padding:1rem;margin-bottom:.75rem}
 .giveaway-card h4{margin-bottom:.25rem}
 input,textarea,select{background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:8px;padding:.5rem .75rem;color:var(--text);font-size:.85rem;outline:none;width:100%;margin-bottom:.5rem}
@@ -80,9 +91,11 @@ input:focus,textarea:focus{border-color:var(--accent)}
 .chat-msg{margin-bottom:.6rem;display:flex;flex-direction:column}
 .chat-msg.user{align-items:flex-end}
 .chat-msg.ai{align-items:flex-start}
+.chat-msg.system{align-items:center}
 .chat-bubble{max-width:80%;padding:.6rem .9rem;border-radius:12px;font-size:.85rem;line-height:1.4}
 .chat-msg.user .chat-bubble{background:var(--accent);color:#fff;border-bottom-right-radius:4px}
 .chat-msg.ai .chat-bubble{background:rgba(255,255,255,.05);border:1px solid var(--border);border-bottom-left-radius:4px}
+.chat-msg.system .chat-bubble{background:rgba(255,215,0,.1);border:1px solid rgba(255,215,0,.2);color:var(--gold);font-size:.75rem;border-radius:4px}
 .chat-input{display:flex;gap:.5rem;padding:.75rem;border-top:1px solid var(--border)}
 .chat-input input{flex:1;margin:0}
 .chat-input button{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:.5rem 1rem;cursor:pointer;font-weight:600}
@@ -102,13 +115,26 @@ input:focus,textarea:focus{border-color:var(--accent)}
 .plans-table input{background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:4px;padding:.3rem .5rem;color:var(--text);font-size:.8rem;width:100%;margin:0}
 .user-info-box{background:rgba(26,26,46,.9);padding:15px;border-radius:12px;margin-bottom:15px;border:1px solid var(--border)}
 .user-info-box h4{color:var(--green);margin-bottom:.5rem}
+.equity-chart-container{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1rem;margin-bottom:1rem}
+.equity-chart-container canvas{max-height:200px}
+.journal-table{width:100%;border-collapse:collapse;font-size:.8rem}
+.journal-table th,.journal-table td{padding:.4rem .6rem;border:1px solid var(--border);text-align:left}
+.journal-table th{background:rgba(255,255,255,.05);color:var(--muted)}
+.risk-card{background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:8px;padding:1rem;margin-bottom:.75rem}
+.risk-card .advice{color:var(--gold);font-size:.9rem;margin-top:.5rem}
+.vip-card{background:rgba(168,85,247,.05);border:1px solid rgba(168,85,247,.2);border-radius:8px;padding:1rem;margin-bottom:.75rem}
+.vip-card h4{color:var(--purple);margin-bottom:.25rem}
+.community-user{font-weight:600;margin-right:.4rem}
 @media(max-width:768px){.header{padding:1rem}.container{padding:1rem}.stat-grid{grid-template-columns:1fr 1fr}}
 </style>
 </head>
 <body>
 <div class="header">
   <h1>CATALYST AI</h1>
-  <div class="status"><div class="dot"></div><span id="status-text">Live</span></div>
+  <div style="display:flex;align-items:center;gap:1rem;">
+    <button class="theme-toggle" onclick="toggleTheme()" id="theme-btn">☀ Light</button>
+    <div class="status"><div class="dot"></div><span id="status-text">Live</span></div>
+  </div>
 </div>
 <div class="container">
 
@@ -172,11 +198,14 @@ input:focus,textarea:focus{border-color:var(--accent)}
   <div class="tab-bar">
     <button class="tab-btn active" onclick="showTab('signals')">Signals</button>
     <button class="tab-btn" onclick="showTab('analytics')">Analytics</button>
+    <button class="tab-btn" onclick="showTab('full-analytics')">Full Analytics</button>
+    <button class="tab-btn" onclick="showTab('vip')">VIP Challenges</button>
     <button class="tab-btn" onclick="showTab('tournaments')">Tournaments</button>
     <button class="tab-btn" onclick="showTab('giveaways')">Giveaways</button>
     <button class="tab-btn" onclick="showTab('referrals')">Referrals</button>
+    <button class="tab-btn" onclick="showTab('community')">Community</button>
     <button class="tab-btn" onclick="showTab('settings')">Settings</button>
-    <button class="tab-btn" onclick="showTab('chat')">Chat</button>
+    <button class="tab-btn" onclick="showTab('chat')">AI Chat</button>
   </div>
 
   <!-- ═══ Signals ═══ -->
@@ -198,6 +227,77 @@ input:focus,textarea:focus{border-color:var(--accent)}
     <div class="card">
       <div class="card-title">Platform Performance</div>
       <div id="platform-breakdown"></div>
+    </div>
+  </div>
+
+  <!-- ═══ Full Analytics ═══ -->
+  <div id="tab-full-analytics" class="tab-content">
+    <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem;flex-wrap:wrap;">
+      <h3 style="color:var(--accent);margin:0;">Full Analytics</h3>
+      <select id="analytics-period" onchange="loadFullAnalytics()" style="width:auto;margin:0;">
+        <option value="7">7 days</option>
+        <option value="30" selected>30 days</option>
+        <option value="90">90 days</option>
+        <option value="365">1 year</option>
+      </select>
+    </div>
+
+    <!-- Trade Overview -->
+    <div class="stat-grid" id="trade-overview-stats"></div>
+
+    <!-- Equity Chart -->
+    <div class="equity-chart-container">
+      <div class="card-title">Equity Curve</div>
+      <canvas id="equity-chart" height="150"></canvas>
+    </div>
+
+    <!-- Subscriber Stats -->
+    <div class="card">
+      <div class="card-title">Subscriber Analytics</div>
+      <div id="subscriber-stats"></div>
+    </div>
+
+    <!-- Risk Snapshot -->
+    <div class="risk-card" id="risk-advice-card">
+      <div class="card-title">Risk Management Snapshot</div>
+      <div id="risk-advice"></div>
+    </div>
+
+    <!-- Trading Journal -->
+    <div class="card">
+      <div class="card-title">Trading Journal</div>
+      <table class="journal-table" id="journal-table">
+        <thead><tr><th>Symbol</th><th>Dir</th><th>TF</th><th>Platform</th><th>Time</th><th>Outcome</th><th>Conf</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div style="display:flex;gap:.5rem;margin-top:.75rem;justify-content:center;">
+        <button class="btn btn-primary" onclick="loadJournal(1)" style="font-size:.75rem;">First</button>
+        <button class="btn btn-primary" id="journal-prev" onclick="loadJournal(journalPage-1)" style="font-size:.75rem;">Prev</button>
+        <span id="journal-page-info" style="font-size:.8rem;color:var(--muted);padding:.3rem;"></span>
+        <button class="btn btn-primary" id="journal-next" onclick="loadJournal(journalPage+1)" style="font-size:.75rem;">Next</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ VIP Challenges ═══ -->
+  <div id="tab-vip" class="tab-content">
+    <div class="card">
+      <div class="card-title">Active VIP Challenges</div>
+      <div id="vip-challenge-list"></div>
+    </div>
+    <div class="card" id="create-vip-challenge" style="display:none">
+      <div class="card-title" style="color:var(--purple);">Create VIP Challenge (Admin)</div>
+      <input id="vip-name" placeholder="Challenge name">
+      <textarea id="vip-desc" placeholder="Description" rows="2"></textarea>
+      <div style="display:flex;gap:.5rem;">
+        <input id="vip-start" type="datetime-local" style="flex:1;" placeholder="Start">
+        <input id="vip-end" type="datetime-local" style="flex:1;" placeholder="End">
+      </div>
+      <div style="display:flex;gap:.5rem;">
+        <input id="vip-fee" type="number" placeholder="Entry fee ($)" value="0" style="flex:1;">
+        <input id="vip-prize" type="number" placeholder="Prize pool ($)" style="flex:1;">
+      </div>
+      <button class="btn btn-purple" onclick="createVIPChallenge()">Create VIP Challenge</button>
     </div>
   </div>
 
@@ -256,6 +356,17 @@ input:focus,textarea:focus{border-color:var(--accent)}
     </div>
   </div>
 
+  <!-- ═══ Community Chat ═══ -->
+  <div id="tab-community" class="tab-content">
+    <div class="chat-container" style="height:500px;display:flex;flex-direction:column;">
+      <div class="chat-messages" id="community-messages" style="flex:1;"></div>
+      <div class="chat-input">
+        <input id="community-input" placeholder="Type a message..." onkeypress="if(event.key==='Enter')sendCommunityMsg()">
+        <button onclick="sendCommunityMsg()">Send</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ═══ Settings ═══ -->
   <div id="tab-settings" class="tab-content">
     <div class="card">
@@ -276,7 +387,7 @@ input:focus,textarea:focus{border-color:var(--accent)}
     </div>
   </div>
 
-  <!-- ═══ Chat ═══ -->
+  <!-- ═══ AI Chat ═══ -->
   <div id="tab-chat" class="tab-content">
     <div class="chat-container">
       <div class="chat-messages" id="chat-messages">
@@ -295,6 +406,25 @@ input:focus,textarea:focus{border-color:var(--accent)}
 <script>
 const UID = localStorage.getItem('user_id') || '1';
 const STORAGE_KEY = 'admin_access_token';
+let journalPage = 1;
+let communityWs = null;
+let equityChartInstance = null;
+
+// ── Theme Toggle ──────────────────────────────────────────────────
+function toggleTheme() {
+  document.body.classList.toggle('light-mode');
+  const isLight = document.body.classList.contains('light-mode');
+  localStorage.setItem('theme', isLight ? 'light' : 'dark');
+  document.getElementById('theme-btn').textContent = isLight ? '🌙 Dark' : '☀ Light';
+}
+// Init theme from localStorage
+(function() {
+  const saved = localStorage.getItem('theme');
+  if (saved === 'light') {
+    document.body.classList.add('light-mode');
+    document.getElementById('theme-btn').textContent = '🌙 Dark';
+  }
+})();
 
 // ── Toast Notification ─────────────────────────────────────────────
 function showToast(msg, type='success') {
@@ -420,14 +550,14 @@ function adminFetch(url, options = {}) {
 }
 
 function showAdminSections() {
-  ['create-tournament','create-giveaway','draw-giveaway'].forEach(id => {
+  ['create-tournament','create-giveaway','draw-giveaway','create-vip-challenge'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = 'block';
   });
 }
 
 function hideAdminSections() {
-  ['create-tournament','create-giveaway','draw-giveaway'].forEach(id => {
+  ['create-tournament','create-giveaway','draw-giveaway','create-vip-challenge'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
   });
@@ -537,7 +667,6 @@ window.addEventListener('load', () => {
   checkUserInfo();
   const token = localStorage.getItem(STORAGE_KEY);
   if (token) {
-    // Try existing access token first
     adminFetch('/api/admin/stats')
       .then(r => {
         if (r.ok) {
@@ -547,14 +676,12 @@ window.addEventListener('load', () => {
           loadPaywallSettings();
           loadActivityLog();
         } else {
-          // Access token expired, try refresh via cookie
           localStorage.removeItem(STORAGE_KEY);
           tryAutoLogin();
         }
       })
       .catch(() => tryAutoLogin());
   } else {
-    // No access token, try refresh cookie for auto-login
     tryAutoLogin();
   }
 });
@@ -566,9 +693,12 @@ function showTab(tab) {
   document.getElementById('tab-' + tab).classList.add('active');
   event.target.classList.add('active');
   if (tab === 'analytics') loadAnalytics();
+  if (tab === 'full-analytics') loadFullAnalytics();
+  if (tab === 'vip') loadVIPChallenges();
   if (tab === 'tournaments') loadTournaments();
   if (tab === 'giveaways') loadGiveaways();
   if (tab === 'referrals') loadReferrals();
+  if (tab === 'community') connectCommunity();
   if (tab === 'settings') loadSettings();
   if (tab === 'signals') loadSignals();
 }
@@ -634,6 +764,186 @@ async function loadAnalytics() {
         <span style="color:${s.win_rate>=93?'var(--green)':'var(--yellow)'}">${s.win_rate}% (${s.total})</span>
       </div>`).join('') || '<div style="color:var(--muted)">No platform data</div>';
   } catch(e) {}
+}
+
+// ── Full Analytics ──────────────────────────────────────────────────
+async function loadFullAnalytics() {
+  const days = document.getElementById('analytics-period').value;
+
+  // Trade Overview
+  try {
+    const r = await fetch(`/api/analytics/full/trade-overview?days=${days}`);
+    const d = await r.json();
+    document.getElementById('trade-overview-stats').innerHTML = `
+      <div class="stat"><div class="num" style="color:var(--accent)">${d.total_signals}</div><div class="label">${days}d Signals</div></div>
+      <div class="stat"><div class="num" style="color:var(--green)">${d.wins}</div><div class="label">Wins</div></div>
+      <div class="stat"><div class="num" style="color:var(--red)">${d.losses}</div><div class="label">Losses</div></div>
+      <div class="stat"><div class="num" style="color:var(--yellow)">${d.ignored}</div><div class="label">Ignored</div></div>
+      <div class="stat"><div class="num" style="color:${d.win_rate>=93?'var(--green)':'var(--yellow)'}">${d.win_rate}%</div><div class="label">Win Rate</div></div>
+      <div class="stat"><div class="num" style="color:var(--green)">${d.best_pair}</div><div class="label">Best Pair</div></div>
+      <div class="stat"><div class="num" style="color:var(--red)">${d.worst_pair}</div><div class="label">Worst Pair</div></div>
+      <div class="stat"><div class="num" style="color:var(--accent)">$${d.final_balance}</div><div class="label">Sim Balance</div></div>`;
+
+    // Equity Chart
+    drawEquityChart(d.equity_curve);
+  } catch(e) { console.error('Trade overview failed:', e); }
+
+  // Subscriber Stats
+  try {
+    const r = await fetch(`/api/analytics/full/subscribers?days=${days}`);
+    const d = await r.json();
+    document.getElementById('subscriber-stats').innerHTML = `
+      <div class="stat-grid">
+        <div class="stat"><div class="num" style="color:var(--accent)">${d.total_users}</div><div class="label">Total Users</div></div>
+        <div class="stat"><div class="num" style="color:var(--green)">${d.new_users_last_30d}</div><div class="label">New (30d)</div></div>
+        <div class="stat"><div class="num" style="color:var(--purple)">${d.premium_users}</div><div class="label">Premium</div></div>
+        <div class="stat"><div class="num" style="color:var(--yellow)">${d.active_users_last_30d}</div><div class="label">Active</div></div>
+        <div class="stat"><div class="num">${d.avg_trades_per_active_user}</div><div class="label">Avg Trades/User</div></div>
+      </div>`;
+  } catch(e) {}
+
+  // Risk Snapshot
+  try {
+    const r = await fetch('/api/analytics/full/risk-snapshot');
+    const d = await r.json();
+    if (d.message) {
+      document.getElementById('risk-advice').innerHTML = `<p>${d.message}</p>`;
+    } else {
+      document.getElementById('risk-advice').innerHTML = `
+        <p>Recent Win Rate: <strong>${d.recent_win_rate}%</strong> | Max Loss Streak: <strong style="color:var(--red)">${d.max_loss_streak}</strong></p>
+        <p class="advice">${d.risk_advice}</p>`;
+    }
+  } catch(e) {}
+
+  // Journal
+  loadJournal(1);
+}
+
+function drawEquityChart(curve) {
+  const ctx = document.getElementById('equity-chart').getContext('2d');
+  if (equityChartInstance) equityChartInstance.destroy();
+  equityChartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: curve.map(p => p.time ? p.time.slice(5,16) : ''),
+      datasets: [{
+        label: 'Balance ($)',
+        data: curve.map(p => p.balance),
+        borderColor: '#22c55e',
+        backgroundColor: 'rgba(34,197,94,0.1)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 1
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#94a3b8' } } },
+      scales: {
+        x: { ticks: { color: '#64748b', maxTicksLimit: 10 }, grid: { color: 'rgba(255,255,255,0.05)' } },
+        y: { ticks: { color: '#64748b' }, grid: { color: 'rgba(255,255,255,0.05)' } }
+      }
+    }
+  });
+}
+
+function loadJournal(page) {
+  journalPage = page;
+  const days = document.getElementById('analytics-period').value;
+  fetch(`/api/analytics/full/journal?days=${days}&page=${page}`)
+    .then(r => r.json())
+    .then(data => {
+      const tbody = document.querySelector('#journal-table tbody');
+      tbody.innerHTML = '';
+      data.trades.forEach(t => {
+        const outcomeColor = t.outcome === 'win' ? 'var(--green)' : t.outcome === 'loss' ? 'var(--red)' : 'var(--yellow)';
+        tbody.innerHTML += `<tr>
+          <td>${t.symbol||'N/A'}</td><td>${t.direction||''}</td><td>${t.timeframe||''}</td>
+          <td>${t.platform||''}</td>
+          <td style="font-size:.7rem;">${t.entry_time ? new Date(t.entry_time).toLocaleString() : ''}</td>
+          <td style="color:${outcomeColor}">${t.outcome}</td>
+          <td>${t.confidence ? t.confidence+'%' : ''}</td>
+        </tr>`;
+      });
+      document.getElementById('journal-page-info').textContent = `Page ${data.page} / ${data.pages || 1}`;
+    });
+}
+
+// ── VIP Challenges ──────────────────────────────────────────────────
+async function loadVIPChallenges() {
+  try {
+    const r = await fetch('/api/vip-challenge/active');
+    const data = await r.json();
+    if (!data.length) {
+      document.getElementById('vip-challenge-list').innerHTML = '<div style="color:var(--muted)">No active VIP challenges right now.</div>';
+      return;
+    }
+    let html = '';
+    for (const c of data) {
+      // Fetch leaderboard for each
+      html += `<div class="vip-card">
+        <h4>${c.name}</h4>
+        <p style="font-size:.8rem;color:var(--muted);">${c.description || ''}</p>
+        <p style="font-size:.85rem;">Prize: <strong style="color:var(--gold)">$${c.prize_pool}</strong> | Entry: $${c.entry_fee} | ${c.participants_count} players | ${c.status}</p>
+        <p style="font-size:.75rem;color:var(--muted);">Ends: ${new Date(c.end).toLocaleString()}</p>
+        <div style="display:flex;gap:.5rem;margin-top:.5rem;">
+          <button class="btn btn-purple" onclick="joinVIP(${c.id})">Join</button>
+          <button class="btn btn-primary" onclick="loadVIPLeaderboard(${c.id})">Leaderboard</button>
+        </div>
+        <div id="vip-lb-${c.id}" style="margin-top:.5rem;display:none;"></div>
+      </div>`;
+    }
+    document.getElementById('vip-challenge-list').innerHTML = html;
+  } catch(e) {}
+}
+
+function joinVIP(challengeId) {
+  const userId = localStorage.getItem('user_id') || UID;
+  fetch(`/api/vip-challenge/${challengeId}/join?user_id=${userId}`, {method:'POST'})
+    .then(r => r.json())
+    .then(d => {
+      if (d.status === 'joined') showToast('You have joined the VIP challenge! 🏆');
+      else if (d.status === 'already_joined') showToast('Already joined!');
+      else showToast(d.detail || d.status, 'error');
+    })
+    .catch(() => showToast('Failed to join', 'error'));
+}
+
+function loadVIPLeaderboard(challengeId) {
+  const el = document.getElementById(`vip-lb-${challengeId}`);
+  if (el.style.display !== 'none') { el.style.display = 'none'; return; }
+  fetch(`/api/vip-challenge/${challengeId}/leaderboard`)
+    .then(r => r.json())
+    .then(data => {
+      let html = '<table class="journal-table" style="margin-top:.5rem;"><thead><tr><th>#</th><th>User</th><th>Score</th><th>W/L</th><th>WR</th></tr></thead><tbody>';
+      data.leaderboard.forEach(p => {
+        html += `<tr><td>${p.rank}</td><td>${p.username}</td><td>${p.score}</td><td>${p.wins}/${p.losses}</td><td>${p.win_rate}%</td></tr>`;
+      });
+      html += '</tbody></table>';
+      if (!data.leaderboard.length) html = '<div style="color:var(--muted);font-size:.8rem;">No participants yet</div>';
+      el.innerHTML = html;
+      el.style.display = 'block';
+    });
+}
+
+function createVIPChallenge() {
+  const body = {
+    name: document.getElementById('vip-name').value,
+    description: document.getElementById('vip-desc').value,
+    start_time: new Date(document.getElementById('vip-start').value).toISOString(),
+    end_time: new Date(document.getElementById('vip-end').value).toISOString(),
+    entry_fee: parseFloat(document.getElementById('vip-fee').value) || 0,
+    prize_pool: parseFloat(document.getElementById('vip-prize').value) || 0
+  };
+  adminFetch('/api/vip-challenge/create', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  })
+  .then(r => { if (!r.ok) throw new Error('Admin auth required'); return r.json(); })
+  .then(d => { showToast('VIP Challenge created! ID: ' + d.challenge_id); loadVIPChallenges(); })
+  .catch(e => showToast('Failed: ' + e.message, 'error'));
 }
 
 // ── Tournaments ──────────────────────────────────────────────────
@@ -750,6 +1060,81 @@ function registerReferral() {
     .then(r=>r.json()).then(d => { showToast('Referral recorded!'); loadReferrals(); });
 }
 
+// ── Community Chat (WebSocket) ──────────────────────────────────
+function connectCommunity() {
+  if (communityWs && communityWs.readyState === WebSocket.OPEN) return;
+
+  const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  communityWs = new WebSocket(`${wsProtocol}//${location.host}/ws/community/${UID}`);
+
+  communityWs.onopen = () => {
+    console.log('Community chat connected');
+  };
+
+  communityWs.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    const chatDiv = document.getElementById('community-messages');
+
+    if (data.type === 'history') {
+      // Load history messages
+      chatDiv.innerHTML = '';
+      data.messages.forEach(m => {
+        appendCommunityMsg(m.username, m.content, m.timestamp, false);
+      });
+      chatDiv.scrollTop = chatDiv.scrollHeight;
+      return;
+    }
+
+    if (data.type === 'system') {
+      const div = document.createElement('div');
+      div.className = 'chat-msg system';
+      div.innerHTML = `<div class="chat-bubble">${escapeHtml(data.text)}</div>`;
+      chatDiv.appendChild(div);
+    } else {
+      appendCommunityMsg(data.username, data.text, data.timestamp, false);
+    }
+    chatDiv.scrollTop = chatDiv.scrollHeight;
+  };
+
+  communityWs.onclose = () => {
+    console.log('Community chat disconnected');
+    // Auto reconnect after 3s
+    setTimeout(() => {
+      const communityTab = document.getElementById('tab-community');
+      if (communityTab && communityTab.classList.contains('active')) {
+        connectCommunity();
+      }
+    }, 3000);
+  };
+
+  communityWs.onerror = () => {};
+}
+
+function appendCommunityMsg(username, text, timestamp, isSelf) {
+  const chatDiv = document.getElementById('community-messages');
+  const div = document.createElement('div');
+  const time = timestamp ? new Date(timestamp).toLocaleTimeString() : '';
+  div.className = 'chat-msg ' + (isSelf ? 'user' : '');
+  div.innerHTML = `<div class="chat-bubble"><span class="community-user" style="color:var(--purple);">${escapeHtml(username)}</span><span style="font-size:.7rem;color:var(--muted);">${time}</span><br>${escapeHtml(text)}</div>`;
+  chatDiv.appendChild(div);
+}
+
+function sendCommunityMsg() {
+  const input = document.getElementById('community-input');
+  const msg = input.value.trim();
+  if (!msg) return;
+
+  if (communityWs && communityWs.readyState === WebSocket.OPEN) {
+    communityWs.send(JSON.stringify({message: msg}));
+    input.value = '';
+    // Show own message immediately
+    appendCommunityMsg('You', msg, new Date().toISOString(), true);
+    document.getElementById('community-messages').scrollTop = document.getElementById('community-messages').scrollHeight;
+  } else {
+    showToast('Community chat not connected', 'error');
+  }
+}
+
 // ── Settings ─────────────────────────────────────────────────────
 async function loadSettings() {
   try {
@@ -773,7 +1158,7 @@ async function saveSettings() {
   showToast('Settings saved!');
 }
 
-// ── Chat ─────────────────────────────────────────────────────────
+// ── AI Chat ─────────────────────────────────────────────────────
 async function sendChat() {
   const input = document.getElementById('chat-input');
   const msg = input.value.trim();
